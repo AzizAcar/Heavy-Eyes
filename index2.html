@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Karanlık Neon Gözlerin Sarılma & Toz Animasyonu</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020205;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* CRT Tarama Çizgileri / Lo-Fi TV Girl Efekti */
+        .crt-overlay {
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(
+                rgba(18, 16, 16, 0) 50%, 
+                rgba(0, 0, 0, 0.35) 50%
+            ), linear-gradient(
+                90deg,
+                rgba(255, 0, 0, 0.03),
+                rgba(0, 255, 0, 0.01),
+                rgba(0, 0, 255, 0.03)
+            );
+            background-size: 100% 3px, 6px 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        /* Vignette / Köşe Karartma */
+        .vignette {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.85) 90%);
+            pointer-events: none;
+            z-index: 4;
+        }
+
+        /* Beyaz Başlangıç Düğmesi Tasarımı */
+        .white-trigger-btn {
+            background: #ffffff;
+            color: #09090b;
+            box-shadow: 0 0 25px rgba(255, 255, 255, 0.6), 0 0 50px rgba(255, 46, 147, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .white-trigger-btn:hover {
+            transform: scale(1.08);
+            box-shadow: 0 0 35px rgba(255, 255, 255, 0.9), 0 0 70px rgba(0, 80, 208, 0.5);
+        }
+
+        .white-trigger-btn:active {
+            transform: scale(0.96);
+        }
+
+        .hidden-btn {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.8);
+            transition: all 0.5s ease-out;
+        }
+
+        /* Retro Zaman Kodu & Altyazı */
+        .tv-hud {
+            font-family: monospace;
+            letter-spacing: 0.15em;
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen m-0 p-0 flex items-center justify-center">
+    <!-- Retro TV HUD Zaman Kodu (Sol Üst - Tıklanabilir Müzik Kontrolü) -->
+    <div id="hudTime" class="absolute top-6 left-6 text-pink-500/70 text-xs sm:text-sm tv-hud z-20 opacity-0 transition-opacity duration-700 cursor-pointer hover:text-pink-400" title="Müziği Başlat / Durdur">
+        PLAY ► 00:00 / 08:00 [TV-GIRL EDITION]
+    </div>
+
+    <!-- Ses Kontrol Göstergesi (Sağ Üst) -->
+    <!-- CRT Tarama Çizgileri ve Vignette -->
+    <div class="crt-overlay"></div>
+    <div class="vignette"></div>
+
+    <!-- Etkileşimli Oynat / Durdur Düğmesi (Sol Üst) -->
+    <button id="audioToggleBtn" class="absolute top-6 left-6 text-pink-500 hover:text-pink-400 text-sm sm:text-base tv-hud z-20 opacity-0 transition-opacity duration-700 bg-black/40 px-3 py-1.5 rounded-lg border border-pink-500/30 cursor-pointer flex items-center gap-2">
+        <span id="audioIcon" class="text-lg">▶</span> <span id="audioText" class="tracking-widest">PLAY</span>
+    </button>
+
+    <!-- Merkezdeki Beyaz Düğme -->
+    <div id="startContainer" class="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+        <button id="startBtn" 
+                aria-label="Animasyonu Başlat"
+                class="white-trigger-btn pointer-events-auto px-10 py-4 rounded-full font-semibold text-base sm:text-lg tracking-wider uppercase cursor-pointer">
+            Başlat
+        </button>
+    </div>
+
+    <!-- Yerel Ses Dosyası Oynatıcı -->
+    <audio id="bgAudio" src="melody.m4a" preload="auto" loop></audio>
+
+    <!-- Çarpışma Sonrası Tekrar Oynat Düğmesi -->
+    <div id="replayContainer" class="absolute bottom-10 inset-x-0 flex justify-center z-10 opacity-0 pointer-events-none transition-opacity duration-700">
+        <button id="replayBtn" 
+                class="white-trigger-btn px-8 py-3 rounded-full font-semibold text-sm sm:text-base tracking-wider uppercase cursor-pointer">
+            Tekrar İzle
+        </button>
+    </div>
+
+    <!-- Animasyon Kanvası -->
+    <canvas id="animCanvas" class="absolute inset-0 w-full h-full block z-0"></canvas>
+
+    <script>
+        // DOM Elementleri
+        const canvas = document.getElementById('animCanvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('startBtn');
+        const startContainer = document.getElementById('startContainer');
+        const replayBtn = document.getElementById('replayBtn');
+        const replayContainer = document.getElementById('replayContainer');
+        const bgAudio = document.getElementById('bgAudio');
+        const audioToggleBtn = document.getElementById('audioToggleBtn');
+        const audioIcon = document.getElementById('audioIcon');
+        const audioText = document.getElementById('audioText');
+
+        // Ekran Boyutları
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+
+        function resizeCanvas() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Animasyon Durumları (Çarpışma süresi 9 saniye olarak ayarlandı)
+        const STATE = {
+            IDLE: 0,
+            APPROACHING: 1, // Yaklaşma ve bakışma (0s - 8.0s)
+            EMBRACING: 2,   // Son milisaniye sarılma (8.0s - 9.0s)
+            DUST_EXPLOSION: 3 // Toza dönüşüm
+        };
+
+        let currentState = STATE.IDLE;
+        let approachDuration = 8000;   // 8 saniye yaklaşma
+        let embraceDuration = 1000;    // 1 saniye sarılma
+        let totalParticles = 100;      // Performans için 100 parçacık
+
+        let leftEye = {
+            x: width * 0.15,
+            y: height * 0.5,
+            color: '#9b004f',
+            glowColor: 'rgba(255, 46, 147, 0.6)'
+        };
+
+        let rightEye = {
+            x: width * 0.85,
+            y: height * 0.5,
+            color: '#003594',
+            glowColor: 'rgba(0, 80, 208, 0.6)'
+        };
+
+        let dustParticles = [];
+        let shockwaves = [];
+        let flashAlpha = 0;
+        let animStartTime = 0;
+        let isAudioPlaying = false;
+
+        function resetPositions() {
+            leftEye.x = width * 0.15;
+            leftEye.y = height * 0.5;
+            rightEye.x = width * 0.85;
+            rightEye.y = height * 0.5;
+        }
+
+        // Ses Oynat / Durdur Toggle Kontrolü
+        audioToggleBtn.addEventListener('click', () => {
+            if (bgAudio.paused) {
+                bgAudio.play().then(() => {
+                    isAudioPlaying = true;
+                    audioIcon.textContent = "⏸";
+                    audioText.textContent = "PAUSE";
+                }).catch(e => {
+                    console.log("Ses oynatılamadı:", e);
+                });
+            } else {
+                bgAudio.pause();
+                isAudioPlaying = false;
+                audioIcon.textContent = "▶";
+                audioText.textContent = "PLAY";
+            }
+        });
+
+        /**
+         * Animasyonu başlatır
+         */
+        function startSequence() {
+            startBtn.classList.add('hidden-btn');
+            startContainer.classList.add('pointer-events-none');
+
+            replayContainer.classList.remove('opacity-100', 'pointer-events-auto');
+            replayContainer.classList.add('opacity-0', 'pointer-events-none');
+            
+            audioToggleBtn.classList.remove('opacity-0');
+
+            // Müziği başlat
+            if (bgAudio) {
+                bgAudio.currentTime = 0;
+                bgAudio.play().then(() => {
+                    isAudioPlaying = true;
+                    audioIcon.textContent = "⏸";
+                    audioText.textContent = "PAUSE";
+                }).catch(e => {
+                    console.log("Ses oynatma hatası:", e);
+                });
+            }
+
+            dustParticles = [];
+            shockwaves = [];
+            flashAlpha = 0;
+            resetPositions();
+
+            currentState = STATE.APPROACHING;
+            animStartTime = performance.now();
+        }
+
+        startBtn.addEventListener('click', startSequence);
+        replayBtn.addEventListener('click', startSequence);
+
+        /**
+         * Çarpışma anında toz parçacıkları oluşturur
+         */
+        function triggerShatterIntoDust(x, y) {
+            dustParticles = [];
+            for (let i = 0; i < totalParticles; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let speed = Math.random() * 6 + 1;
+                const isPink = i < 50;
+
+                dustParticles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    radius: 1.5 + Math.random() * 2.0,
+                    color: isPink ? '#c80064' : '#0050d0',
+                    alpha: 1.0,
+                    decay: 0.005 + Math.random() * 0.01,
+                    gravity: 0.01,
+                    swirl: (Math.random() - 0.5) * 0.1
+                });
+            }
+
+            shockwaves.push({ x, y, radius: 10, maxRadius: Math.max(width, height) * 0.5, alpha: 0.7 });
+            flashAlpha = 0.7;
+        }
+
+        /**
+         * Kirpikli Pembe Göz Çizimi (Sol)
+         */
+        function drawLashEye(x, y, scale, lookAngle) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(scale, scale);
+
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 45, 30, 0, 0, Math.PI * 2);
+            ctx.fillStyle = '#0a0508';
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#9b004f';
+            ctx.stroke();
+
+            ctx.strokeStyle = '#c80064';
+            ctx.lineWidth = 2.5;
+            const lashes = [-25, -12, 0, 12, 25];
+            lashes.forEach((lx, idx) => {
+                ctx.beginPath();
+                ctx.moveTo(lx, -26);
+                let tipX = lx + (idx - 2) * 4;
+                let tipY = -42 - Math.abs(idx - 2) * 2;
+                ctx.lineTo(tipX, tipY);
+                ctx.stroke();
+            });
+
+            let pupilOffsetX = Math.cos(lookAngle) * 12;
+            let pupilOffsetY = Math.sin(lookAngle) * 4;
+
+            ctx.beginPath();
+            ctx.arc(pupilOffsetX, pupilOffsetY, 15, 0, Math.PI * 2);
+            ctx.fillStyle = '#ff2e93';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(pupilOffsetX + 2, pupilOffsetY, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        /**
+         * Düz Mavi Göz Çizimi (Sağ)
+         */
+        function drawFlatEye(x, y, scale, lookAngle) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(scale, scale);
+
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 45, 28, 0, 0, Math.PI * 2);
+            ctx.fillStyle = '#02050b';
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#003594';
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(-35, -38);
+            ctx.lineTo(35, -38);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#0050d0';
+            ctx.stroke();
+
+            let pupilOffsetX = Math.cos(lookAngle) * 12;
+            let pupilOffsetY = Math.sin(lookAngle) * 4;
+
+            ctx.beginPath();
+            ctx.arc(pupilOffsetX, pupilOffsetY, 15, 0, Math.PI * 2);
+            ctx.fillStyle = '#0050d0';
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.arc(pupilOffsetX - 2, pupilOffsetY, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff';
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        /**
+         * Kolların Sarılma Çizimi
+         */
+        function drawEmbracingArms(lx, ly, rx, ry, progress) {
+            ctx.save();
+            ctx.strokeStyle = '#ff2e93';
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+
+            ctx.beginPath();
+            ctx.moveTo(lx + 35, ly + 10);
+            ctx.quadraticCurveTo(
+                lx + 70 + progress * 40, 
+                ly + 30, 
+                (lx + rx) / 2 - 10, 
+                ly + 5
+            );
+            ctx.stroke();
+
+            ctx.strokeStyle = '#0050d0';
+            ctx.beginPath();
+            ctx.moveTo(rx - 35, ry + 10);
+            ctx.quadraticCurveTo(
+                rx - 70 - progress * 40, 
+                ry + 30, 
+                (lx + rx) / 2 + 10, 
+                ry + 5
+            );
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        /**
+         * Ana Render Döngüsü (60 FPS)
+         */
+        function animateLoop(timestamp) {
+            requestAnimationFrame(animateLoop);
+
+            ctx.fillStyle = '#020205';
+            ctx.fillRect(0, 0, width, height);
+
+            if (currentState === STATE.IDLE) {
+                let time = timestamp * 0.002;
+                let idleY = height * 0.5 + Math.sin(time) * 8;
+                drawLashEye(width * 0.15, idleY, 1.0, 0);
+                drawFlatEye(width * 0.85, idleY, 1.0, Math.PI);
+                return;
+            }
+
+            let elapsed = timestamp - animStartTime;
+            let centerX = width / 2;
+            let centerY = height / 2;
+
+            if (elapsed < 9000) { // Toplam 9 saniyelik çarpışma kurgusu
+                let progress = elapsed / 9000;
+                let easedProgress = Math.pow(progress, 3.2);
+
+                let startDist = width * 0.35;
+                leftEye.x = centerX - startDist * (1 - easedProgress);
+                rightEye.x = centerX + startDist * (1 - easedProgress);
+
+                let floatY = Math.sin(elapsed * 0.003) * 6;
+                leftEye.y = centerY + floatY;
+                rightEye.y = centerY - floatY;
+
+                // Frekans bağları
+                ctx.save();
+                ctx.strokeStyle = progress > 0.7 ? 'rgba(255, 46, 147, 0.4)' : 'rgba(0, 80, 208, 0.2)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 8]);
+                ctx.beginPath();
+                ctx.moveTo(leftEye.x + 40, leftEye.y);
+                ctx.lineTo(rightEye.x - 40, rightEye.y);
+                ctx.stroke();
+                ctx.restore();
+
+                drawLashEye(leftEye.x, leftEye.y, 1.0, 0);
+                drawFlatEye(rightEye.x, rightEye.y, 1.0, Math.PI);
+
+                if (progress > 0.75) {
+                    let armProgress = (progress - 0.75) / 0.25;
+                    drawEmbracingArms(leftEye.x, leftEye.y, rightEye.x, rightEye.y, armProgress);
+                }
+            } 
+            else {
+                if (currentState !== STATE.DUST_EXPLOSION) {
+                    currentState = STATE.DUST_EXPLOSION;
+                    triggerShatterIntoDust(centerX, centerY);
+                }
+
+                shockwaves.forEach(sw => {
+                    sw.radius += (sw.maxRadius - sw.radius) * 0.06;
+                    sw.alpha *= 0.95;
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(255, 46, 147, ${sw.alpha})`;
+                    ctx.lineWidth = 2.0;
+                    ctx.stroke();
+                    ctx.restore();
+                });
+
+                if (flashAlpha > 0) {
+                    ctx.save();
+                    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.restore();
+                    flashAlpha *= 0.85;
+                }
+
+                ctx.save();
+                dustParticles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy + p.gravity;
+                    p.vx += p.swirl;
+                    p.vy += 0.01;
+                    p.alpha -= p.decay;
+
+                    if (p.alpha > 0) {
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                        ctx.fillStyle = p.color;
+                        ctx.globalAlpha = Math.max(0, p.alpha);
+                        ctx.fill();
+                    }
+                });
+                ctx.restore();
+
+                if (elapsed >= 11500) {
+                    replayContainer.classList.remove('opacity-0', 'pointer-events-none');
+                    replayContainer.classList.add('opacity-100', 'pointer-events-auto');
+                }
+            }
+        }
+
+        requestAnimationFrame(animateLoop);
+    </script>
+</body>
+</html>
